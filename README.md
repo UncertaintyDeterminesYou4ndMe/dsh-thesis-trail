@@ -76,7 +76,7 @@ dsh 对话里的 AI 能读写同一份库：`trail_brief`（当前状态和待�
 
 ## 数据
 
-默认在 `~/.dsh/thesis-trail/trail.db`。要换路径，在 profile 的 `cordis.patch.yml` 里按 id 覆盖：
+默认在 `~/.dsh/thesis-trail/trail.db`（设了 `DSH_HOME` 时在 `$DSH_HOME/thesis-trail/`）。要换路径，在 profile 的 `cordis.patch.yml` 里按 id 覆盖：
 
 ```yaml
 - id: thesis-trail

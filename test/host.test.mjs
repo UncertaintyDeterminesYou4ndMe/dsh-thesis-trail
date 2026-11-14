@@ -13,7 +13,7 @@ const file = join(dir, 'trail.db')
 // A fresh store has no board. Every store here starts by importing this one,
 // so its ten topics are t1…t10 on board `acme`.
 const FIXTURE = readFileSync(new URL('./board.md', import.meta.url), 'utf8')
-const { apply, inject, migrateLegacyDatabase, isPeak, costOf, DEFAULT_PRICES } = await import('../index.js')
+const { apply, inject, migrateLegacyDatabase, isPeak, costOf, DEFAULT_PRICES, defaultDatabasePath } = await import('../index.js')
 const { latestSlot, nextSlot, parseAnswer, answerProse, researchPrompt } = await import('../research.js')
 assert.deepEqual(inject, ['tools', 'webServer', 'schedule'])
 
@@ -49,6 +49,8 @@ assert.deepEqual(inject, ['tools', 'webServer', 'schedule'])
 delete process.env.DEEPSEEK_API_KEY
 process.env.DSH_HOME = join(dir, 'no-dsh-home')
 globalThis.fetch = () => { throw new Error('a test tried to reach the network') }
+// The default store follows DSH_HOME, so a second dsh home never opens the first one's data.
+assert.equal(defaultDatabasePath(), join(dir, 'no-dsh-home', 'thesis-trail', 'trail.db'))
 
 // ---------------------------------------------------------------- mock host
 // The schedule service only matters for adopting the tasks of v7 and earlier:

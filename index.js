@@ -281,14 +281,19 @@ CREATE INDEX IF NOT EXISTS topic_log_state ON topic_log(board_id, author, state)
 
 // ------------------------------------------------------------------ storage
 
+/** dsh's data folder: $DSH_HOME, or ~/.dsh. */
+export function dshHome() {
+  return process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
+}
+
 /** Where the store lives when the bundle row does not name a file. */
-export function defaultDatabasePath(home = homedir()) {
-  return join(home, '.dsh', 'thesis-trail', 'trail.db')
+export function defaultDatabasePath(home = dshHome()) {
+  return join(home, 'thesis-trail', 'trail.db')
 }
 
 /** Where this plugin kept its store while it was called research-board. */
-export function legacyDatabasePath(home = homedir()) {
-  return join(home, '.dsh', 'research-board', 'board.db')
+export function legacyDatabasePath(home = dshHome()) {
+  return join(home, 'research-board', 'board.db')
 }
 
 /**
@@ -1872,7 +1877,7 @@ export function apply(ctx, config = {}) {
       if (typeof stored === 'string' && stored.trim() !== '') return stored.trim()
     } catch { /* no credentials service, or it failed: fall back below */ }
     if (process.env.DEEPSEEK_API_KEY?.trim()) return process.env.DEEPSEEK_API_KEY.trim()
-    const home = process.env.DSH_HOME?.trim() || join(homedir(), '.dsh')
+    const home = dshHome()
     try {
       const match = readFileSync(join(home, '.env'), 'utf8').match(/^\s*(?:export\s+)?DEEPSEEK_API_KEY\s*=\s*(.*)$/m)
       const value = match?.[1]?.trim().replace(/^["']|["']$/g, '')
