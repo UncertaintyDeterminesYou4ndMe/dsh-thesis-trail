@@ -1,0 +1,58 @@
+{
+  "name": "dsh-thesis-trail",
+  "version": "0.1.0",
+  "description": "循迹：在 DeepSeek Harness 里长期跟踪可证伪的投资命题。插件按你定的时间，用 DeepSeek API 的联网搜索逐条研究到期的议题，记下证据、判断走势和每一次改动；你和 AI 一起改议题，你写过的段落 AI 只能提建议。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "research.js",
+    "board-file.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale",
+    "docs",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    },
+    "compatibility": {
+      "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+    }
+  },
+  "engines": {
+    "node": ">=24.9.0",
+    "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+  },
+  "scripts": {
+    "test": "node test/host.test.mjs"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek",
+    "research",
+    "investing",
+    "thesis-tracking"
+  ],
+  "license": "MIT"
+}

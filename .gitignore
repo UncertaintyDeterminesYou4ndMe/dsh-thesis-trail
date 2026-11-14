@@ -1,0 +1,8 @@
+node_modules/
+*.log
+.DS_Store
+# Local development only: handoff notes, rollback copies, demo seeds, the preview harness.
+HANDOFF.md
+.rollback/
+.seed-*.mjs
+.preview/

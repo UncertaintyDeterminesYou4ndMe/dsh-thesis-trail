@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Thesis Trail",
+    "description": "Long-running tracking of falsifiable investment theses. On your schedule the plugin researches each due topic with the DeepSeek API's web search and records the evidence, the stance over time and every change. You and the AI edit topics together; text you wrote, the AI can only suggest changes to.",
+    "detail": "docs/DETAIL.md"
+  }
+}

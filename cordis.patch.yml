@@ -1,0 +1,13 @@
+# 循迹：装进 profile 时插入的宿主行。
+# database 留空时用 ~/.dsh/thesis-trail/trail.db；首次启动时如果它不存在、
+# 而旧的 ~/.dsh/research-board/board.db 存在，会复制一份过来（旧文件保留）。
+# 要改路径就在 profile 的 cordis.patch.yml 里按 id 覆盖：
+#   - id: thesis-trail
+#     name: 'dsh-thesis-trail'
+#     config:
+#       database: /absolute/path/trail.db
+- insert:
+    - id: thesis-trail
+      name: 'dsh-thesis-trail'
+      config:
+        database: ''
