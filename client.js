@@ -379,6 +379,12 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
 .rb-choice-text{font-size:11.5px;line-height:1.5;color:var(--rb-muted)}
 .rb-keybar{padding:7px 20px;border-bottom:1px solid var(--rb-line);font-size:11.5px;line-height:1.55;color:var(--rb-warn);flex:0 0 auto}
 .rb-menu-foot{display:flex;gap:14px}
+.rb-srcs{display:grid;gap:7px;margin-top:2px}
+.rb-src{display:grid;grid-template-columns:auto 1fr;column-gap:8px;align-items:baseline;font-size:12px;color:var(--rb-ink);cursor:pointer}
+.rb-src input{margin:0;accent-color:var(--rb-brand)}
+.rb-src-desc{grid-column:2;font-size:11px;line-height:1.5;color:var(--rb-muted)}
+.rb-srcline{font-size:11.5px;color:var(--rb-muted);margin-top:1px;padding:0;border:0;background:none;cursor:pointer;text-align:left}
+.rb-srcline:hover{color:var(--rb-ink);text-decoration:underline}
 
 /* passages — the text is the editor: hover tints it, a click edits in place */
 .rb-text{margin:0 -6px;padding:2px 6px;border-radius:3px;font-size:13px;line-height:1.72;white-space:pre-wrap;overflow-wrap:anywhere;cursor:text;transition:background-color .12s ease}
@@ -671,6 +677,7 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
         stream_failed: '连接中途断开',
         refused: '模型拒绝回答',
         no_json_in_answer: '回答里没有结果，没写入任何东西',
+        no_search: '模型没有联网搜索就作答，没写入任何东西',
       }
       : {
         no_api_key: 'no DeepSeek key (DEEPSEEK_API_KEY in ~/.dsh/.env)',
@@ -682,6 +689,7 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
         stream_failed: 'connection dropped',
         refused: 'the model refused',
         no_json_in_answer: 'the answer had no result block; nothing was written',
+        no_search: 'the model answered without searching the web; nothing was written',
       }
     // How a pass started and how it ended, for the footer.
     const RUN_MODE_NAMES = isZh
@@ -1783,6 +1791,7 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
             ? h('div', { className: 'rb-rs-err' }, `${isZh ? '没有完成：' : 'Not finished: '}${researchErrorText(item.error)}`)
             : h('div', { className: 'rb-rs-sum' }, item.summary || (isZh ? '（没有摘要）' : '(no summary)')),
           wrote.length ? h('div', { className: 'rb-rs-meta', style: { marginTop: 3 } }, wrote.join(' · ')) : null,
+          item.material ? h('div', { className: 'rb-rs-meta', style: { marginTop: 3 } }, materialText(item.material)) : null,
           item.queries?.length || opened.length || item.answer ? h('details', null,
             h('summary', null, isZh ? '看它查了什么' : 'What it looked at'),
             item.queries?.length ? h('ul', null, item.queries.map((query, index) => h('li', { key: `q${index}` }, String(query)))) : null,
@@ -2218,7 +2227,7 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
     }
 
     /** The board picker in the header: one board per company or asset tracked. */
-    function BoardSwitcher({ boards, current, currency, onPick, onNew, onImport, onExport, onOpen }) {
+    function BoardSwitcher({ boards, current, currency, onPick, onNew, onImport, onExport, onSources, onOpen }) {
       const [open, setOpen] = useState(false)
       const ref = useRef(null)
       useEffect(() => {
@@ -2258,7 +2267,8 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
           h('div', { className: 'rb-menu-foot' },
             h('button', { type: 'button', className: 'rb-link', onClick: () => { setOpen(false); onNew() } }, isZh ? '新标的' : 'New board'),
             h('button', { type: 'button', className: 'rb-link', onClick: () => { setOpen(false); onImport() } }, isZh ? '导入' : 'Import'),
-            h('button', { type: 'button', className: 'rb-link', onClick: () => { setOpen(false); onExport() } }, isZh ? '导出这个标的' : 'Export this board')))
+            h('button', { type: 'button', className: 'rb-link', onClick: () => { setOpen(false); onExport() } }, isZh ? '导出这个标的' : 'Export this board'),
+            h('button', { type: 'button', className: 'rb-link', onClick: () => { setOpen(false); onSources() } }, isZh ? '数据源' : 'Sources')))
           : null)
     }
 
@@ -2425,7 +2435,8 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
             onChange: event => setMarkdown(event.target.value),
           }),
           preview ? (preview.ok
-            ? h('p', { className: 'rb-form-note' }, h('strong', { className: 'rb-ink' }, preview.title), ` · ${previewText(preview, currency)}`)
+            ? h('p', { className: 'rb-form-note' }, h('strong', { className: 'rb-ink' }, preview.title),
+              ` · ${previewText(preview, currency)}`)
             : h('ul', { className: 'rb-problems' }, (preview.problems?.length ? preview.problems : [{ code: preview.error ?? 'unknown' }])
               .slice(0, 8).map((problem, index) => h('li', { key: index }, problemText(problem))))) : null),
         h('div', { className: 'rb-form-row' },
@@ -2438,6 +2449,114 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
           message
             ? h('span', { className: 'rb-form-msg' }, message)
             : h('span', { className: 'rb-form-hint' }, isZh ? `${SUBMIT_KEY} 导入 · Esc 取消` : `${SUBMIT_KEY} to import · Esc to cancel`)))
+    }
+
+    const SOURCE_NAMES = isZh
+      ? { fda: 'FDA 审批', trials: '临床试验', news: '新闻', papers: '论文' }
+      : { fda: 'FDA decisions', trials: 'clinical trials', news: 'news', papers: 'papers' }
+    const SOURCE_NOTES = isZh
+      ? {
+        fda: '510(k) 和 PMA 的器械批准记录',
+        trials: 'ClinicalTrials.gov 上公司发起、最近有更新的试验',
+        news: 'Google News 按公司名搜索的英文标题，只作线索',
+        papers: 'PubMed 上作者单位含公司名的论文',
+      }
+      : {
+        fda: '510(k) clearances and PMA approvals for devices',
+        trials: 'ClinicalTrials.gov studies the company sponsors, recently updated',
+        news: 'Google News headlines for the company name; leads only',
+        papers: 'PubMed papers with the company in an author affiliation',
+      }
+
+    /** The header line under the board name: what the board gathers from. */
+    function sourceLineText(sources) {
+      if (!sources) return isZh ? '数据源' : 'Sources'
+      if (!sources.search_names?.length) return isZh ? '数据源：没有可检索的名字，只靠联网搜索' : 'Sources: no name to search; web search only'
+      const on = Object.keys(SOURCE_NAMES).filter(key => sources.enabled?.[key]).map(key => SOURCE_NAMES[key])
+      return `${isZh ? '数据源：' : 'Sources: '}${sources.search_names.join(' | ')}${on.length ? ` · ${on.join(isZh ? '、' : ', ')}` : (isZh ? ' · 全部关闭' : ' · all off')}`
+    }
+
+    /** What a pass gathered, for the research log. */
+    function materialText(material) {
+      const counts = Object.entries(material.counts ?? {}).map(([key, n]) => `${SOURCE_NAMES[key] ?? key} ${n}`)
+      const failed = Object.keys(material.errors ?? {}).map(key => SOURCE_NAMES[key] ?? (isZh ? '全部' : 'all'))
+      return [
+        `${isZh ? '一手材料' : 'Primary material'}${material.since ? (isZh ? `（${material.since} 起）` : ` (since ${material.since})`) : ''}：${counts.join(' · ') || (isZh ? '无' : 'none')}`,
+        failed.length ? (isZh ? `${failed.join('、')}没取到` : `${failed.join(', ')} failed`) : null,
+      ].filter(Boolean).join(isZh ? '；' : '; ')
+    }
+
+    /** Where a board's primary material comes from: search names and source switches. */
+    function SourcesSheet({ board, title, onClose, onSaved }) {
+      const [loaded, setLoaded] = useState(null)
+      const [searchName, setSearchName] = useState('')
+      const [enabled, setEnabled] = useState({})
+      // Only switches the reader touched are saved, so untouched healthcare
+      // sources still follow the FDA and trial check.
+      const [touched, setTouched] = useState({})
+      const [saving, setSaving] = useState(false)
+      const [message, setMessage] = useState(null)
+      const fill = sources => {
+        setLoaded(sources)
+        setSearchName(sources.search_name ?? '')
+        setEnabled(sources.enabled ?? {})
+        setTouched({})
+      }
+      useEffect(() => {
+        let alive = true
+        request('/boards').then(data => {
+          const item = data.boards.find(entry => entry.id === board)
+          if (alive && item) fill(item.sources)
+        }).catch(() => { if (alive) setMessage(isZh ? '读取失败' : 'Could not load') })
+        return () => { alive = false }
+      }, [board])
+      const save = async () => {
+        setSaving(true)
+        setMessage(null)
+        const switches = Object.fromEntries(Object.keys(touched).map(key => [key, enabled[key] === true]))
+        const result = await postJson('/board/sources', { board, search_name: searchName, sources: switches }).catch(() => null)
+        setSaving(false)
+        if (!result?.ok) {
+          setMessage(result?.data?.error === 'search_name_too_long' ? (isZh ? '检索用名太长了。' : 'The search names are too long.') : (isZh ? '保存失败' : 'Save failed'))
+          return
+        }
+        fill(result.data.sources)
+        setMessage(isZh ? '已保存，下次巡检开始生效。' : 'Saved; the next pass uses it.')
+        onSaved?.()
+      }
+      const onKeyDown = event => {
+        if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); save() }
+        if (event.key === 'Escape') { event.preventDefault(); onClose() }
+      }
+      const health = loaded?.health === true
+        ? (isZh ? '按这些名字查到了 FDA 或临床试验记录，FDA、临床试验和论文默认开启。' : 'FDA or trial records were found under these names, so FDA, trials and papers are on by default.')
+        : loaded?.health === false
+          ? (isZh ? '按这些名字没查到 FDA 或临床试验记录，FDA、临床试验和论文默认关闭，需要时可以手动打开。' : 'No FDA or trial records under these names, so FDA, trials and papers are off by default; switch them on if needed.')
+          : (isZh ? '第一次取材时会按这些名字查一次 FDA 和临床试验记录，查到就自动打开 FDA、临床试验和论文。' : 'The first gather checks FDA and trial records under these names once and switches on FDA, trials and papers if any exist.')
+      return h('div', { className: 'rb-form', onKeyDown },
+        h('h2', { className: 'rb-dtitle' }, isZh ? `「${title}」的数据源` : `Sources for "${title}"`),
+        h('p', { className: 'rb-form-lead' }, isZh
+          ? '每次巡检前，循迹先从下面这些公开数据源按公司名取上次检查以来的新记录，放在每个议题的研究提示词前面，再让模型联网搜索补充。这些来源不用注册，也不用填任何信息。取材本身免费；提示词变长，十个议题一轮大约多花几分钱。'
+          : 'Before each pass, 循迹 fetches what is new since the last check from these public sources by company name and puts it ahead of every topic\'s research prompt; the model then searches the web as before. No sign-up or details are needed. Fetching is free; the longer prompt adds a few cents per pass of ten topics.'),
+        loaded ? [
+          h('div', { className: 'rb-form-row', key: 'name' },
+            h('span', { className: 'rb-form-label' }, isZh ? '检索用名' : 'Search names', h('span', { className: 'rb-opt' }, isZh ? ' · 选填' : ' · optional')),
+            h('input', { className: 'rb-input', value: searchName, placeholder: loaded.search_names?.join(' | ') || (isZh ? '公司名' : 'Company name'), onChange: event => setSearchName(event.target.value) }),
+            h('p', { className: 'rb-form-note' }, isZh
+              ? '用英文公司名效果最好。多个名字用 | 隔开，比如公司改过名，可以写「新名 | 旧名」。不填就用标的名，去掉括号里的代码和 Inc. 之类的后缀。'
+              : 'English company names work best. Separate several with |, for example "new name | old name" after a rename. Empty means the board name without the ticker in parentheses and suffixes such as Inc.')),
+          h('div', { className: 'rb-form-row', key: 'list' },
+            h('span', { className: 'rb-form-label' }, isZh ? '来源' : 'Sources'),
+            h('div', { className: 'rb-srcs' }, Object.keys(SOURCE_NAMES).map(key => h('label', { key, className: 'rb-src' },
+              h('input', { type: 'checkbox', checked: enabled[key] === true, onChange: event => { const on = event.target.checked; setEnabled(previous => ({ ...previous, [key]: on })); setTouched(previous => ({ ...previous, [key]: true })) } }),
+              h('span', null, SOURCE_NAMES[key]),
+              h('span', { className: 'rb-src-desc' }, SOURCE_NOTES[key])))),
+            h('p', { className: 'rb-form-note' }, health)),
+        ] : null,
+        h('div', { className: 'rb-form-actions' },
+          h('button', { className: 'rb-btn primary', type: 'button', onClick: save, disabled: saving || !loaded }, saving ? (isZh ? '保存中…' : 'Saving…') : (isZh ? '保存' : 'Save')),
+          h('button', { className: 'rb-btn', type: 'button', onClick: onClose, disabled: saving }, isZh ? '关闭' : 'Close'),
+          message ? h('span', { className: 'rb-form-msg' }, message) : h('span', { className: 'rb-form-hint' }, isZh ? `${SUBMIT_KEY} 保存 · Esc 关闭` : `${SUBMIT_KEY} to save · Esc to close`)))
     }
 
     /** A board's definition as a file to hand to someone else. */
@@ -3106,9 +3225,12 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
                 onNew: () => { setView('topics'); setSheet('new') },
                 onImport: () => { setView('topics'); setSheet('import') },
                 onExport: () => { setView('topics'); setSheet('export') },
+                onSources: () => { setView('topics'); setSheet('sources') },
                 onOpen: () => { loadBoards().catch(() => {}) },
               })),
             state.board.note ? h('div', { className: 'rb-sub', title: state.board.note }, state.board.note) : null,
+            h('button', { type: 'button', className: 'rb-srcline', onClick: () => { setView('topics'); setSheet('sources') } },
+              sourceLineText(boards?.find(item => item.id === (board ?? state.board.id))?.sources)),
           ),
           h('div', { className: 'rb-actions' },
             // Cadence and "run now" both decide when a pass happens, so they sit together.
@@ -3132,7 +3254,8 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
               h('div', { className: 'rb-doc-in' },
                 sheet === 'import' ? h(ImportForm, { onImported: imported, onCancel: () => setSheet(null), currency })
                   : sheet === 'export' ? h(ExportSheet, { board: state.board.id, title: state.board.title, onClose: () => setSheet(null) })
-                    : h(BoardForm, { onSubmit: addBoard, onCancel: () => setSheet(null) }))))) : null,
+                    : sheet === 'sources' ? h(SourcesSheet, { board: state.board.id, title: state.board.title, onClose: () => setSheet(null), onSaved: () => loadBoards().catch(() => {}) })
+                      : h(BoardForm, { onSubmit: addBoard, onCancel: () => setSheet(null) }))))) : null,
         showUsage || sheet ? null : h('div', { className: 'rb-body' },
           h('aside', { className: 'rb-list' },
             h('div', { className: 'rb-list-head' },

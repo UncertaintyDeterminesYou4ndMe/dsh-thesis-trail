@@ -15,6 +15,7 @@
     "index.js",
     "research.js",
     "board-file.js",
+    "sources.js",
     "client.js",
     "cordis.patch.yml",
     "locale",
@@ -44,7 +45,7 @@
     "dsh": ">=0.2.2-rc.1 <0.3.0-0"
   },
   "scripts": {
-    "test": "node test/host.test.mjs"
+    "test": "node test/sources.test.mjs && node test/host.test.mjs"
   },
   "keywords": [
     "dsh",

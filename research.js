@@ -123,7 +123,7 @@ const stanceText = value => value === null || value === undefined ? '还没有�
  * of the board (so one fact can be linked to several).
  */
 export function researchPrompt(input) {
-  const { today, board, topic, mode, lastChecked, stance, evidence = [], inbox = [], humanFields = [], pending = [], rejected = [], others = [] } = input
+  const { today, board, topic, mode, lastChecked, stance, evidence = [], inbox = [], humanFields = [], pending = [], rejected = [], others = [], material = '' } = input
   const since = lastChecked ? `上次检查（${lastChecked}）` : '近一年'
   const task = {
     deep: `做一次深入研究：至少核对三个独立来源，优先一手资料（10-K/10-Q/8-K、财报电话会纪要、公司公告、监管文件、学术论文）。`,
@@ -131,7 +131,17 @@ export function researchPrompt(input) {
     glance: `只查${since}以来有没有重大事件：财报、指引变化、监管处罚、诉讼、并购、管理层变动、大客户得失。没有就如实写没有，立场填 null。`,
   }[mode]
   const lines = []
-  lines.push(`今天是 ${today}。你在长期跟踪「${board.title}」的一个可证伪命题。${task}`)
+  // Everything up to the topic is the same for every topic of the board, so
+  // DeepSeek's prefix cache serves it after the first request of a pass.
+  lines.push(`今天是 ${today}。你在长期跟踪「${board.title}」的可证伪命题。`)
+  if (material) {
+    lines.push('')
+    lines.push(material)
+    lines.push('')
+    lines.push('（以上材料对这个标的的所有议题相同。下面是这次要研究的一个议题。）')
+  }
+  lines.push('')
+  lines.push(task)
   lines.push('')
   lines.push(`议题 ${topic.id}：${topic.title}`)
   lines.push(`命题：${topic.thesis}`)
@@ -170,12 +180,13 @@ export function researchPrompt(input) {
   }
   lines.push('')
   lines.push(`做法：
-1. 先找反方证据：哪些事实会削弱命题、接近证伪条件。再找支持的事实。
-2. 引用财报、指引这类定期数据前，确认它是 ${today} 之前最新的一期，不要把一年前的季报当成最新数据。
-3. 逐条对照证伪条件，说明有没有被触发。
-4. 立场 stance 在 -1 到 1 之间：-1 确认偏空，0 多空胶着，+1 确认偏多。只有证伪条件或它的反面已被明确满足时才用 ±1；没有新信息时填 null，表示沿用上次的立场。
-5. evidence 只放你这次实际搜到或打开过的页面，url 原样照抄，不要凭记忆编写链接。direction：1 支持命题，-1 削弱命题，0 中性。最多 8 条。
-6. 回复读者用中文，具体说明查了什么、改了什么。读者要求改写的，在 edits 里给出那个字段的新全文和理由。
+1. 必须先用 deepseek_web_search 联网搜索，用几组不同的搜索词，再写结论。不能只凭记忆或上面列出的已入库证据作答，没有联网搜索的回答会被整个丢弃。搜过之后确实没有新事实，就如实写「搜了哪些词，没有新进展」，不要拿旧闻凑数。
+2. 先找反方证据：哪些事实会削弱命题、接近证伪条件。再找支持的事实。
+3. 引用财报、指引这类定期数据前，确认它是 ${today} 之前最新的一期，不要把一年前的季报当成最新数据。${material ? '一手材料里的记录以原文为准，新闻标题只是线索，引用前要打开原文核实。材料只是起点，仍要按第 1 条联网搜索。' : ''}
+4. 逐条对照证伪条件，说明有没有被触发。
+5. 立场 stance 在 -1 到 1 之间：-1 确认偏空，0 多空胶着，+1 确认偏多。只有证伪条件或它的反面已被明确满足时才用 ±1；没有新信息时填 null，表示沿用上次的立场。
+6. evidence 只放你这次实际搜到或打开过的页面${material ? '，或上面一手材料里列出的链接' : ''}，url 原样照抄，不要凭记忆编写链接。direction：1 支持命题，-1 削弱命题，0 中性。最多 8 条。
+7. 回复读者用中文，具体说明查了什么、改了什么。读者要求改写的，在 edits 里给出那个字段的新全文和理由。
 
 先用几段话写研究说明，最后输出一个 JSON 代码块，格式如下（没有的项用空数组或空字符串）：
 \`\`\`json

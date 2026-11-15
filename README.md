@@ -43,6 +43,10 @@ dsh plugin --profile web add /path/to/dsh-thesis-trail                          
 
 费用参考（2026-11 实测，每个议题研究一次）：重要性高用深度搜索，约 ¥0.20；中用普通搜索，约 ¥0.05；低只看有没有重大事件，更便宜。查过的议题按重要性隔 1 天、7 天或 30 天再到期，所以十个中等议题的标的平均每天不到一毛钱。面板的「用量」页按天、周、月列出每一次研究的 token、搜索次数和费用。
 
+## 一手材料
+
+每轮巡检前，循迹先按公司名从公开数据源取上次检查以来的新记录，放进研究提示词，再让模型联网搜索。所有标的都有新闻标题；在 FDA 或 ClinicalTrials.gov 查得到记录的公司，还会有 FDA 器械审批、临床试验和论文。公司名默认取标的名，不用注册，也不用填任何信息。取材免费，不存库。详见 [docs/DETAIL.md](docs/DETAIL.md) 的「一手材料」。
+
 ## 开始用
 
 第一次打开是空的，有两个入口：
@@ -96,7 +100,7 @@ dsh 对话里的 AI 能读写同一份库：`trail_brief`（当前状态和待�
 ## 开发
 
 ```sh
-npm test    # 宿主逻辑测试：假的 dsh 宿主、假的 DeepSeek，不联网、不读真实 key
+npm test    # 取材模块和宿主逻辑测试：假的 dsh 宿主、假的 DeepSeek、假的公开数据源，不联网、不读真实 key
 ```
 
 结构：
@@ -105,6 +109,7 @@ npm test    # 宿主逻辑测试：假的 dsh 宿主、假的 DeepSeek，不联�
 index.js        宿主：SQLite 存储、定时器、面板 API、trail_* 工具
 research.js     一次研究请求：提示词、流式解析、证据链接检查、时间计算
 board-file.js   议题文件（Markdown）的导入解析和导出
+sources.js      一手材料：FDA、ClinicalTrials.gov、PubMed、Google News 的取材和整理
 client.js       面板（React，挂在 dsh 的布局插槽上），不需要构建
 test/           测试和测试用的议题文件（虚构公司）
 ```

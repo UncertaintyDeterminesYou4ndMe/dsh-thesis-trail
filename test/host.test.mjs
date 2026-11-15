@@ -15,6 +15,7 @@ const file = join(dir, 'trail.db')
 const FIXTURE = readFileSync(new URL('./board.md', import.meta.url), 'utf8')
 const { apply, inject, migrateLegacyDatabase, isPeak, costOf, DEFAULT_PRICES, defaultDatabasePath } = await import('../index.js')
 const { latestSlot, nextSlot, parseAnswer, answerProse, researchPrompt } = await import('../research.js')
+const { makeWeb, ACME_510K } = await import('./fake-web.mjs')
 assert.deepEqual(inject, ['tools', 'webServer', 'schedule'])
 
 // ---------------------------------------------------------------- legacy migration
@@ -99,7 +100,13 @@ function makeDeepSeek() {
       gate = new Promise(resolve => { open = resolve })
       return () => { gate = null; open() }
     },
+    /** The public sources, when a test attaches a fake of them; otherwise any other URL throws. */
+    web: null,
     async fetch(url, init) {
+      if (!String(url).startsWith('https://api.deepseek.com/')) {
+        if (api.web) return api.web(url, init)
+        throw new Error(`a test without a fake web reached ${url}`)
+      }
       const body = JSON.parse(init.body)
       const prompt = body.messages[0].content
       calls.push({ url, headers: init.headers, body, prompt, topic: /议题 (\S+)：/.exec(prompt)?.[1] ?? null })
@@ -109,8 +116,12 @@ function makeDeepSeek() {
       const usage = { input: 1000, cache: 0, output: 200, searches: 1, fetches: 0, ...plan.usage }
       const events = [{ type: 'message_start', message: { usage: { input_tokens: usage.input, cache_read_input_tokens: usage.cache, output_tokens: 0 } } }]
       let index = 0
-      events.push({ type: 'content_block_start', index: index++, content_block: { type: 'server_tool_use', id: 'u1', name: 'deepseek_web_search', input: { action: 'search', queries: plan.queries ?? ['q'] } } })
-      events.push({ type: 'content_block_start', index: index++, content_block: { type: 'web_search_tool_result', tool_use_id: 'u1', content: (plan.results ?? []).map(link => ({ type: 'web_search_result', url: link, title: `title of ${link}`, page_age: '2026-11-10', site_name: 'site' })) } })
+      // `noTools`: the model answers from memory, without searching or opening anything.
+      if (plan.noTools) usage.searches = 0
+      else {
+        events.push({ type: 'content_block_start', index: index++, content_block: { type: 'server_tool_use', id: 'u1', name: 'deepseek_web_search', input: { action: 'search', queries: plan.queries ?? ['q'] } } })
+        events.push({ type: 'content_block_start', index: index++, content_block: { type: 'web_search_tool_result', tool_use_id: 'u1', content: (plan.results ?? []).map(link => ({ type: 'web_search_result', url: link, title: `title of ${link}`, page_age: '2026-11-10', site_name: 'site' })) } })
+      }
       for (const link of plan.opened ?? []) {
         events.push({ type: 'content_block_start', index: index++, content_block: { type: 'server_tool_use', id: `o${index}`, name: 'deepseek_web_search', input: { action: 'open_page', url: link } } })
         events.push({ type: 'content_block_start', index: index++, content_block: { type: 'web_fetch_tool_result', content: { url: link, content: { title: `page ${link}` }, published_at: '2026-11-09' } } })
@@ -130,9 +141,13 @@ function makeDeepSeek() {
 const deepseek = makeDeepSeek()
 const hooks = {}
 /** Bundle config for a test apply: always the fake key and the fake DeepSeek. */
-const config = (extra = {}) => ({ database: file, apiKey: 'test-key', fetch: deepseek.fetch, startDelayMs: 0, hooks, ...extra })
+const config = (extra = {}) => ({ database: file, apiKey: 'test-key', fetch: deepseek.fetch, startDelayMs: 0, sourceDelayMs: 0, hooks, ...extra })
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 30))
+/** Let a started pass reach DeepSeek: it gathers its material first, without timers in tests. */
+const callsReach = async count => {
+  for (let i = 0; i < 100 && deepseek.calls.length < count; i += 1) await new Promise(resolve => setImmediate(resolve))
+}
 let host = makeHost()
 apply(host.ctx, config())
 await settle()
@@ -380,6 +395,8 @@ console.log('topics and counters: ok')
   assert.equal(res.body.thread_id, rootId, 'a new comment starts its own thread')
   assert.equal(res.body.run?.ok, true, 'Ask AI researches the topic at once')
   assert.equal(res.body.run.queued, false)
+  // The pass gathers primary material first (here every source fails at once), then calls DeepSeek.
+  await callsReach(callsBefore + 1)
   assert.equal(deepseek.calls.length, callsBefore + 1)
   const askCall = deepseek.calls.at(-1)
   assert.equal(askCall.topic, 't4', 'only the asked topic is researched')
@@ -844,7 +861,7 @@ assert.equal((await http('GET', '/state?board=nope')).status, 404)
   assert.equal(filing.kind, 'filing')
   assert.equal(filing.direction, 1)
   assert.equal(filing.published_at, '2026-11-05')
-  assert.equal(filing.source, 'site', 'details from the search survive reading the page')
+  assert.equal(filing.source, 'sec.gov', 'the source is the link host, not the search service\'s site name')
   assert.equal(read("SELECT published_at FROM evidence WHERE url = 'https://news.example.com/t1'")[0].published_at, '2026-11-10', 'the page age fills a missing date')
   const t1Now = await topicOf('t1')
   assert.equal(t1Now.stance, 0.6)
@@ -925,6 +942,18 @@ assert.equal((await http('GET', '/state?board=nope')).status, 404)
   await hooks.settled('acme')
   assert.equal((await http('GET', '/state')).body.research.error, 'no_json_in_answer')
   assert.equal(read('SELECT COUNT(*) AS n FROM evidence')[0].n, evidenceCount)
+
+  // An answer written without any search is dropped, whatever it claims to have
+  // checked, and the topic is tried again later.
+  deepseek.reply = () => ({ noTools: true, answer: { summary: '检索了近一年的披露，没有变化', evidence: [], stance: 0.3, rationale: '凭印象' } })
+  const assessmentCount = read("SELECT COUNT(*) AS n FROM assessment WHERE topic_id = 't2'")[0].n
+  await http('POST', '/topic/research', { topic: 't2' })
+  await hooks.settled('acme')
+  state = (await http('GET', '/state')).body
+  assert.equal(state.research.error, 'no_search')
+  assert.ok(state.research.retry_at, 'a topic answered without searching is retried')
+  assert.equal(read("SELECT COUNT(*) AS n FROM assessment WHERE topic_id = 't2'")[0].n, assessmentCount, 'no stance from memory')
+  assert.equal(read("SELECT error FROM pass WHERE topic_id = 't2' ORDER BY started_at DESC, turn DESC LIMIT 1")[0].error, 'no_search')
   deepseek.reply = () => ({ answer: { summary: '没有新进展', evidence: [], stance: null } })
   console.log('research: ok')
 }
@@ -1377,7 +1406,11 @@ host.dispose()
     db.exec(`
       CREATE TABLE usage_scan (session_id TEXT PRIMARY KEY, through TEXT);
       ALTER TABLE board ADD COLUMN prompt_version INTEGER NOT NULL DEFAULT 0;
-      INSERT INTO settings (key, value) VALUES ('schedule_id', 'sched-legacy'), ('schedule_prompt_version', '7');
+      ALTER TABLE board ADD COLUMN ticker TEXT;
+      ALTER TABLE board ADD COLUMN cik TEXT;
+      ALTER TABLE board ADD COLUMN company TEXT;
+      ALTER TABLE board ADD COLUMN sic TEXT;
+      INSERT INTO settings (key, value) VALUES ('schedule_id', 'sched-legacy'), ('schedule_prompt_version', '7'), ('sec_contact', 'reader@example.com');
       UPDATE board SET schedule_id = NULL;
     `)
     db.close()
@@ -1387,8 +1420,8 @@ host.dispose()
   await settle()
   const db = new DatabaseSync(oldFile, { readOnly: true })
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'usage_scan'").get().n, 0)
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('board') WHERE name = 'prompt_version'").get().n, 0)
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM settings WHERE key LIKE 'schedule_%'").get().n, 0)
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM pragma_table_info('board') WHERE name IN ('prompt_version', 'ticker', 'cik', 'company', 'sic')").get().n, 0)
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM settings WHERE key LIKE 'schedule_%' OR key = 'sec_contact'").get().n, 0, 'the SEC contact email is not kept')
   db.close()
   step.dispose()
   console.log('leftovers removed: ok')
@@ -1469,6 +1502,108 @@ host.dispose()
   assert.ok(second.topics.every(topic => topic.id.startsWith('acme-2-t')))
   blank.dispose()
   console.log('blank start, import, export: ok')
+}
+
+// ---------------------------------------------------------------- primary material
+{
+  const srcFile = join(dir, 'sources', 'trail.db')
+  const ds = makeDeepSeek()
+  const web = makeWeb()
+  ds.web = web.fetch
+  const src = makeHost()
+  const own = {}
+  apply(src.ctx, config({ database: srcFile, hooks: own, fetch: ds.fetch, sourceDelayMs: 0 }))
+  await settle()
+  const call = (method, path, body) => callRoute(src.routes[0], method, path, body === undefined ? undefined : JSON.stringify(body))
+  const db = () => new DatabaseSync(srcFile)
+  const rows = (query, ...params) => { const d = db(); const out = d.prepare(query).all(...params); d.close(); return out }
+  const exec = query => { const d = db(); d.exec(query); d.close() }
+  await importFixture(src.routes[0], srcFile)
+
+  // Nothing to set up: the names come from the board title, news is on, and
+  // whether the healthcare sources apply is not known before the first gather.
+  let boards = (await call('GET', '/boards')).body
+  assert.ok(!('sec_contact' in boards))
+  assert.deepEqual(boards.boards[0].sources, {
+    health: null, search_name: '', search_names: ['Acme Robotics'],
+    enabled: { fda: false, trials: false, news: true, papers: false },
+  })
+  assert.equal((await call('POST', '/board/sources', { sources: { telepathy: true } })).body.error, 'invalid_sources')
+  assert.equal((await call('POST', '/board/sources', { sources: { filings: true } })).body.error, 'invalid_sources', 'the SEC sources are gone')
+  assert.equal((await call('POST', '/board/sources', { search_name: 'x'.repeat(121) })).body.error, 'search_name_too_long')
+  let res = await call('POST', '/board/sources', { sources: { papers: false }, search_name: 'Acme Robotics | Acme Labs' })
+  assert.equal(res.status, 200, JSON.stringify(res.body))
+  assert.equal(res.body.sources.enabled.papers, false)
+  assert.deepEqual(res.body.sources.search_names, ['Acme Robotics', 'Acme Labs'])
+  assert.equal(web.requests.length, 0, 'saving asks no site')
+  await call('POST', '/board/sources', { search_name: '' })
+  exec("UPDATE board SET sources = NULL WHERE id = 'acme'")
+
+  // One pass over two topics: the healthcare check, one gather, the same material first in both prompts.
+  exec("UPDATE topic SET next_due_at = '2999-01-01T00:00:00.000Z' WHERE id NOT IN ('t1', 't2')")
+  ds.reply = request => request.topic === 't1'
+    ? { answer: { summary: '器械获批支持命题', evidence: [{ title: 'Acme Surgical Arm 510(k)', url: ACME_510K, direction: 1, kind: 'filing', summary: '获批' }], stance: 0.3, rationale: '获批' } }
+    : { answer: { summary: '没有新进展', evidence: [], stance: null } }
+  res = await call('POST', '/run-now')
+  assert.equal(res.status, 200, JSON.stringify(res.body))
+  await own.settled('acme')
+  assert.equal(rows("SELECT health FROM board WHERE id = 'acme'")[0].health, 1, 'FDA records turn the health sources on')
+  assert.ok(web.requests.every(r => r.ua === 'dsh-thesis-trail'), 'no site sees anything but the plugin name')
+  assert.deepEqual(ds.calls.map(c => c.topic).sort(), ['t1', 't2'])
+  const [p1, p2] = ds.calls.map(c => c.prompt)
+  const shared = p1.indexOf('（以上材料对这个标的的所有议题相同')
+  assert.ok(shared > 0 && p1.includes('一手材料') && p1.includes('Acme Surgical Arm'))
+  assert.equal(p1.slice(0, shared), p2.slice(0, shared), 'topics of one board share the prompt prefix')
+  assert.ok(p1.indexOf('一手材料') < p1.indexOf('议题 '), 'material comes before the topic')
+  assert.equal(web.requests.filter(r => r.url.includes('news.google.com')).length, 1, 'gathered once for the pass')
+  const approval = rows('SELECT * FROM evidence WHERE url = ?', ACME_510K)[0]
+  assert.ok(approval, 'a link from the material passes the evidence check without a search hit')
+  assert.equal(approval.source, 'FDA')
+  const run = rows("SELECT * FROM run WHERE board_id = 'acme' ORDER BY id DESC LIMIT 1")[0]
+  const stats = JSON.parse(run.sources)
+  assert.deepEqual(stats.counts, { fda: 1, trials: 1, news: 1, papers: 1 })
+  const yearAgo = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() - 365 * 86_400_000))
+  assert.equal(stats.since, yearAgo, 'topics never checked ask for a year')
+  assert.ok(stats.chars > 300 && stats.links === 4)
+  assert.ok(!('text' in stats), 'the material itself is not stored')
+  const log = (await call('GET', '/timeline?topic=t1')).body.research[0]
+  assert.equal(log.material.counts.fda, 1, 'the research log shows what was gathered')
+
+  // A source that fails is noted; the pass goes on.
+  web.fail.add('news')
+  ds.reply = () => ({ answer: { summary: '没有新进展', evidence: [], stance: null } })
+  await call('POST', '/topic/research', { topic: 't3' })
+  await own.settled('acme')
+  const failedRun = JSON.parse(rows("SELECT sources FROM run WHERE board_id = 'acme' ORDER BY id DESC LIMIT 1")[0].sources)
+  assert.equal(failedRun.errors.news, 'http_500')
+  assert.equal(rows("SELECT status FROM run WHERE board_id = 'acme' ORDER BY id DESC LIMIT 1")[0].status, 'ok')
+  web.fail.delete('news')
+  assert.ok(ds.calls.at(-1).prompt.includes('NCT07000000'))
+
+  // A topic checked on 1 October asks only for the material since then.
+  exec("UPDATE topic SET checked_at = '2026-10-01T12:00:00.000Z' WHERE id = 't4'")
+  await call('POST', '/topic/research', { topic: 't4' })
+  await own.settled('acme')
+  assert.equal(JSON.parse(rows("SELECT sources FROM run WHERE board_id = 'acme' ORDER BY id DESC LIMIT 1")[0].sources).since, '2026-10-01')
+  assert.ok(ds.calls.at(-1).prompt.includes('NCT07000000') && !ds.calls.at(-1).prompt.includes('K261234'), 'the September approval is outside the window')
+
+  // At most three gathers a day per board; later passes reuse the last one.
+  await call('POST', '/topic/research', { topic: 't5' })
+  await own.settled('acme')
+  assert.equal(web.requests.filter(r => r.url.includes('news.google.com')).length, 3)
+  assert.ok(ds.calls.at(-1).prompt.includes('NCT07000000'), 'the reused material still goes into the prompt')
+
+  // New names clear the healthcare check; every source off means no requests.
+  res = await call('POST', '/board/sources', { search_name: 'Acme Labs', sources: { fda: false, trials: false, news: false, papers: false } })
+  assert.equal(res.body.sources.health, null)
+  exec("UPDATE board SET health = 0 WHERE id = 'acme'")
+  const before = web.requests.length
+  await call('POST', '/topic/research', { topic: 't6' })
+  await own.settled('acme')
+  assert.equal(web.requests.length, before, 'all sources off: no requests')
+  assert.ok(!ds.calls.at(-1).prompt.includes('一手材料'))
+  src.dispose()
+  console.log('primary material: ok')
 }
 
 // ---------------------------------------------------------------- no key

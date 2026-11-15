@@ -28,6 +28,7 @@ import {
   MODE_OF, RESEARCH_MODEL, answerProse, latestSlot, nextSlot, parseAnswer, researchPrompt, runResearch, toolCounts,
 } from './research.js'
 import { boardToMarkdown, parseBoardMarkdown } from './board-file.js'
+import { SOURCE_KEYS, detectHealth, gatherMaterial, searchNamesOf, sourcesOf } from './sources.js'
 
 export const name = 'thesis-trail'
 export const inject = ['tools', 'webServer', 'schedule']
@@ -61,10 +62,12 @@ const RESEARCH_CONCURRENCY = 2
 const STALE_RUN_MS = 2 * 60 * 60 * 1000
 /** Waits before the first and second retry of a topic whose research failed for a passing reason. */
 const RETRY_DELAYS_MS = [5 * 60 * 1000, 20 * 60 * 1000]
-/** Failures worth retrying: the network, rate limits, the server, an answer without a result block. */
-const TRANSIENT_ERROR = /^(request_failed|stream_failed|generation_failed|no_json_in_answer|http_(408|429|5\d\d))\b/
+/** Failures worth retrying: the network, rate limits, the server, an answer without a result block or without a search. */
+const TRANSIENT_ERROR = /^(request_failed|stream_failed|generation_failed|no_json_in_answer|no_search|http_(408|429|5\d\d))\b/
 /** Research requests per topic that keep their full text; older ones keep numbers and summary only. */
 const RESEARCH_LOG_KEEP = 6
+/** Gathers of one board's primary material per local day; later passes that day reuse the last one. */
+const MATERIAL_PER_DAY = 3
 
 /** Topic columns that carry authored content; every change to them is logged. */
 const TOPIC_FIELDS = ['title', 'thesis', 'falsifier', 'bull_case', 'bear_case', 'metric', 'status']
@@ -831,11 +834,21 @@ export function apply(ctx, config = {}) {
   // The AI's last word that the falsifier was met, until the reader dismisses it.
   ensureColumn(db, 'topic', 'falsified_at', 'falsified_at TEXT')
   ensureColumn(db, 'topic', 'falsified_note', 'falsified_note TEXT')
+  // Primary sources: whether the company has FDA or trial records (null until
+  // the first gather checks), the reader's search names, which sources are on,
+  // and per run what the gather brought.
+  ensureColumn(db, 'board', 'health', 'health INTEGER')
+  ensureColumn(db, 'board', 'search_name', 'search_name TEXT')
+  ensureColumn(db, 'board', 'sources', 'sources TEXT')
+  ensureColumn(db, 'run', 'sources', 'sources TEXT')
   // Gone in v8: the session-log scan marks and the prompt version of the dsh task.
   db.exec('DROP TABLE IF EXISTS usage_scan')
-  if (db.prepare("SELECT 1 FROM pragma_table_info('board') WHERE name = 'prompt_version'").get()) {
-    try { db.exec('ALTER TABLE board DROP COLUMN prompt_version') } catch { /* an SQLite without DROP COLUMN keeps it; nothing reads it */ }
+  // Gone before release: the SEC lookup (ticker, CIK, company, SIC) and its contact email.
+  for (const column of ['prompt_version', 'ticker', 'cik', 'company', 'sic']) {
+    if (!db.prepare("SELECT 1 FROM pragma_table_info('board') WHERE name = ?").get(column)) continue
+    try { db.exec(`ALTER TABLE board DROP COLUMN ${column}`) } catch { /* an SQLite without DROP COLUMN keeps it; nothing reads it */ }
   }
+  db.prepare("DELETE FROM settings WHERE key = 'sec_contact'").run()
   // Up to v4 one task served the only board and its id lived in settings. It
   // moves onto that board, where adoptScheduleTasks() deletes the task.
   {
@@ -1977,6 +1990,93 @@ export function apply(ctx, config = {}) {
   }
   if (config.hooks && typeof config.hooks === 'object') Object.assign(config.hooks, { tick, settled, adoptScheduleTasks, requestPass })
 
+  // ---------------------------------------------------------------- primary material
+
+  const sourceDelayMs = Number.isFinite(config.sourceDelayMs) ? config.sourceDelayMs : 250
+  const sourceSleep = () => sourceDelayMs > 0 ? new Promise(resolve => setTimeout(resolve, sourceDelayMs)) : Promise.resolve()
+  /** Per board: the local day, gathers that day, and the last result. Memory only. */
+  const gathered = new Map()
+
+  /**
+   * The board's primary material since the earliest last check among these
+   * topics (a year for a topic never checked), or null when the board gives no
+   * name to search. The first gather also checks FDA and ClinicalTrials.gov
+   * once to decide whether the healthcare sources apply. A board gathers at
+   * most MATERIAL_PER_DAY times a local day; later passes reuse the last gather.
+   */
+  async function materialFor(board, topics) {
+    const names = searchNamesOf(board.search_name, board.title)
+    if (names.length === 0) return null
+    const today = localDate(new Date(clock()), localZone)
+    const memo = gathered.get(board.id)
+    const count = memo?.day === today ? memo.count : 0
+    if (count >= MATERIAL_PER_DAY) return memo.result
+    const yearAgo = localDate(new Date(clock() - 365 * 86_400_000), localZone)
+    const checked = topics.map(topic => topic.checked_at)
+    const since = checked.some(at => !at) ? yearAgo
+      : checked.map(at => localDate(new Date(at), localZone)).sort()[0]
+    let current = board
+    try {
+      if (current.health === null || current.health === undefined) {
+        const health = await detectHealth({ fetch: fetchImpl, names, sleep: sourceSleep })
+        if (health !== null) {
+          db.prepare('UPDATE board SET health = ? WHERE id = ?').run(health ? 1 : 0, board.id)
+          current = getBoard(board.id)
+        }
+      }
+      const result = await gatherMaterial({ fetch: fetchImpl, board: current, since, today, sleep: sourceSleep })
+      gathered.set(board.id, { day: today, count: count + 1, result })
+      return result
+    } catch (failure) {
+      warn(`gathering material for ${board.id}`, failure)
+      return { text: '', links: [], counts: {}, errors: { all: String(failure?.message ?? failure).slice(0, 120) }, since, names }
+    }
+  }
+
+  /** What a run records of its gather: no text, no links. */
+  const materialStats = material => ({
+    since: material.since, counts: material.counts, errors: material.errors,
+    chars: material.text.length, links: material.links.length,
+  })
+
+  /** A board's source settings as the panel shows them. */
+  function sourceView(board) {
+    return {
+      health: board.health === null || board.health === undefined ? null : board.health === 1,
+      search_name: board.search_name ?? '',
+      search_names: searchNamesOf(board.search_name, board.title),
+      enabled: sourcesOf(board),
+    }
+  }
+
+  /**
+   * Change a board's search names or source switches. New names clear the
+   * healthcare check, so the next gather looks again under the new names.
+   */
+  async function setBoardSources(boardId, input = {}) {
+    const board = getBoard(boardId)
+    if (!board) return { error: 'board_not_found', status: 404 }
+    if (input.search_name !== undefined) {
+      const name = text(input.search_name)
+      if (name.length > 120) return { error: 'search_name_too_long', status: 400 }
+      if ((name || null) !== (board.search_name ?? null)) {
+        db.prepare('UPDATE board SET search_name = ?, health = NULL WHERE id = ?').run(name || null, boardId)
+      }
+    }
+    if (input.sources !== undefined) {
+      if (!input.sources || typeof input.sources !== 'object') return { error: 'invalid_sources', status: 400, allowed: SOURCE_KEYS }
+      let chosen = {}
+      try { chosen = JSON.parse(board.sources ?? '{}') ?? {} } catch { chosen = {} }
+      for (const [key, value] of Object.entries(input.sources)) {
+        if (!SOURCE_KEYS.includes(key) || typeof value !== 'boolean') return { error: 'invalid_sources', status: 400, allowed: SOURCE_KEYS }
+        chosen[key] = value
+      }
+      db.prepare('UPDATE board SET sources = ? WHERE id = ?').run(JSON.stringify(chosen), boardId)
+    }
+    gathered.delete(boardId)
+    return { board: boardId, sources: sourceView(getBoard(boardId)) }
+  }
+
   /** Research a set of topics as one run. */
   async function researchPass(boardId, topics, reason) {
     const board = getBoard(boardId)
@@ -2003,6 +2103,10 @@ export function apply(ctx, config = {}) {
     const cursor = Math.max(Number(readSetting(`brief_cursor:${boardId}`) ?? 0), 0, ...inbox.map(item => item.log_id))
     writeSetting(`brief_cursor:${boardId}`, cursor)
     const others = db.prepare("SELECT id, title FROM topic WHERE board_id = ? AND status = 'active' ORDER BY seq").all(boardId)
+    // Primary material, gathered once for the board and shared by every topic.
+    const material = await materialFor(board, topics)
+    if (!alive) return
+    if (material) db.prepare('UPDATE run SET sources = ? WHERE id = ?').run(JSON.stringify(materialStats(material)), runId)
     const queue = [...topics]
     const results = []
     let turn = 0
@@ -2011,7 +2115,7 @@ export function apply(ctx, config = {}) {
         const topic = queue.shift()
         turn += 1
         const items = inbox.filter(item => item.topic_id === topic.id)
-        results.push(await researchOne(board, topic, runId, turn, items, others))
+        results.push(await researchOne(board, topic, runId, turn, items, others, material))
       }
     }
     await Promise.all(Array.from({ length: Math.min(RESEARCH_CONCURRENCY, queue.length) }, worker))
@@ -2055,7 +2159,7 @@ export function apply(ctx, config = {}) {
   }
 
   /** One research request for one topic, written to the store. */
-  async function researchOne(board, topic, runId, turn, items, others) {
+  async function researchOne(board, topic, runId, turn, items, others, material = null) {
     const importance = IMPORTANCE.includes(topic.importance) ? topic.importance : DEFAULT_IMPORTANCE
     const mode = MODE_OF[importance]
     const last = db.prepare('SELECT stance, created_at, rationale FROM assessment WHERE topic_id = ? ORDER BY id DESC LIMIT 1').get(topic.id)
@@ -2076,15 +2180,20 @@ export function apply(ctx, config = {}) {
       pending: collaboration.pending_proposals,
       rejected: collaboration.rejected_proposals,
       others: others.filter(other => other.id !== topic.id),
+      material: material?.text ?? '',
     })
     const result = await runResearch({ fetch: fetchImpl, apiKey: await apiKey(), prompt, mode, signal: stopAll.signal })
     if (!alive) return { ok: false, topicId: topic.id, title: topic.title, summary: null, error: 'stopped' }
     const parsed = result.error ? null : parseAnswer(result.text)
-    const error = result.error ?? (parsed.ok ? null : parsed.error)
+    // Web search is optional for the model. An answer written without a single
+    // search or opened page comes from memory, whatever it says it checked.
+    const tools = toolCounts(result.usage ?? {})
+    const looked = result.trace.queries.length + result.trace.pages.length + tools.searches + tools.fetches > 0
+    const error = result.error ?? (!parsed.ok ? parsed.error : looked ? null : 'no_search')
     let applied = null
     if (!error) {
       try {
-        applied = applyAnswer(board.id, topic, runId, parsed.data, result.trace, items, others)
+        applied = applyAnswer(board.id, topic, runId, parsed.data, result.trace, items, others, material?.links ?? [])
       } catch (failure) {
         applied = { error: String(failure?.message ?? failure) }
       }
@@ -2102,9 +2211,13 @@ export function apply(ctx, config = {}) {
   const hostOf = url => { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return null } }
 
   /** Write one answer: evidence it actually saw, stance, replies, edits, a question, an earlier next check. */
-  function applyAnswer(boardId, topic, runId, data, trace, items, others) {
+  function applyAnswer(boardId, topic, runId, data, trace, items, others, materialLinks = []) {
     // A link can come back from a search and again from reading the page: keep both sides' details.
+    // Links in the primary material count as seen too: the plugin fetched them itself.
     const seen = new Map()
+    for (const link of materialLinks) {
+      seen.set(normalizeUrl(link.url), { url: link.url, title: link.title, page_age: link.date, label: link.label })
+    }
     for (const result of trace.results) {
       const key = normalizeUrl(result.url)
       const known = Object.entries(result).filter(([, value]) => value !== null && value !== undefined)
@@ -2127,7 +2240,8 @@ export function apply(ctx, config = {}) {
       const written = addEvidence(boardId, runId, {
         title: text(item.title) || source.title || url,
         url,
-        source: source.site ?? hostOf(url),
+        // The search service's site name is often another page's title; the host is reliable.
+        source: source.label ?? hostOf(url),
         published_at: published,
         summary: text(item.summary),
         direction: [-1, 0, 1].includes(Number(item.direction)) ? Number(item.direction) : 0,
@@ -2424,6 +2538,8 @@ export function apply(ctx, config = {}) {
     `).all(topicId, limit).map(pass => {
       let trace = {}
       try { trace = JSON.parse(pass.trace ?? '{}') } catch { trace = {} }
+      let material = null
+      try { material = JSON.parse(db.prepare('SELECT sources FROM run WHERE id = ?').get(pass.run_id)?.sources ?? 'null') } catch { material = null }
       const tokens = db.prepare('SELECT * FROM pass_tokens WHERE session_id = ? AND turn = ?').all(pass.session_id, pass.turn)
       const tokenCost = tokens.reduce((sum, row) => sum + (costOf(prices, row.model, row.period, row) ?? 0), 0)
       return {
@@ -2442,6 +2558,7 @@ export function apply(ctx, config = {}) {
         pages: trace.pages ?? [],
         applied: trace.applied ?? null,
         falsifier_triggered: trace.falsifier_triggered === true,
+        material,
         answer: pass.answer,
       }
     })
@@ -2506,6 +2623,7 @@ export function apply(ctx, config = {}) {
             },
             badge: badgeOf(db, board.id),
             month_cost: month.boards[board.id] ?? 0,
+            sources: sourceView(board),
           }
         })
         return json({ boards, currency: prices.currency, month_cost: month.total, has_key: await apiKey() !== null })
@@ -2523,6 +2641,10 @@ export function apply(ctx, config = {}) {
         // Closed and merged topics are history, not part of what to track.
         const topics = db.prepare("SELECT * FROM topic WHERE board_id = ? AND status IN ('active', 'paused') ORDER BY seq, id").all(boardId)
         return json({ ok: true, board: board.id, markdown: boardToMarkdown(board, topics, url.searchParams.get('lang') === 'en' ? 'en' : 'zh') })
+      }
+      if (request.method === 'POST' && path === '/board/sources') {
+        const body = await request.json().catch(() => ({}))
+        return outcome(await setBoardSources(body.board ? boardOf(body.board) : boardId, body))
       }
       if (request.method === 'POST' && (path === '/board/add' || path === '/board/edit')) {
         const body = await request.json().catch(() => ({}))
