@@ -87,7 +87,7 @@ const DEFAULT_IMPORTANCE = 'medium'
 /**
  * Rough CNY cost of researching one topic once, by importance, from real
  * requests in November 2026: a deep search runs about ¥0.20, a plain search
- * about ¥0.05. Only used to tell the reader what an import will cost.
+ * about ¥0.05. Only used to tell the reader what a pass will cost.
  */
 const PASS_ESTIMATE = { high: 0.2, medium: 0.05, low: 0.03 }
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -2720,8 +2720,16 @@ export function apply(ctx, config = {}) {
       }
       if (request.method === 'POST' && path === '/run-now') {
         if (!getBoard(boardId)) return json({ ok: false, code: 'board_not_found' }, 404)
+        const body = await request.json().catch(() => ({}))
+        const active = db.prepare("SELECT id, importance FROM topic WHERE board_id = ? AND status = 'active'").all(boardId)
+        // `all`: the reader asked to research every active topic now, due or not.
+        if (body?.all === true) {
+          if (active.length === 0) return json({ ok: false, code: 'no_active_topics' }, 409)
+          return json(await startResearch(boardId, active.map(topic => topic.id), 'manual'))
+        }
         if (selectTopics(boardId, null, true).length === 0 && !running.has(boardId)) {
-          return json({ ok: false, code: 'nothing_due' }, 409)
+          const estimate = active.reduce((sum, topic) => sum + (PASS_ESTIMATE[topic.importance] ?? PASS_ESTIMATE[DEFAULT_IMPORTANCE]), 0)
+          return json({ ok: false, code: 'nothing_due', active: active.length, estimate }, 409)
         }
         return json(await startResearch(boardId, null, 'manual'))
       }

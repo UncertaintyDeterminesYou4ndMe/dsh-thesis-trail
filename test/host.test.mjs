@@ -922,6 +922,21 @@ assert.equal((await http('GET', '/state?board=nope')).status, 404)
   assert.equal(res.status, 409)
   assert.equal(res.body.code, 'nothing_due')
   assert.equal(deepseek.calls.length, quiet)
+  const activeIds = read("SELECT id FROM topic WHERE board_id = 'acme' AND status = 'active' ORDER BY id").map(row => row.id)
+  assert.equal(res.body.active, activeIds.length, 'the answer says how many topics a full pass would cover')
+  assert.ok(res.body.estimate > 0, 'and roughly what it costs')
+
+  // The reader can still research every active topic now, due or not.
+  deepseek.reply = () => ({ answer: { summary: '全部重研', evidence: [], stance: null } })
+  res = await http('POST', '/run-now', { all: true })
+  assert.equal(res.status, 200, JSON.stringify(res.body))
+  assert.equal(res.body.ok, true)
+  await hooks.settled('acme')
+  assert.deepEqual(deepseek.calls.slice(quiet).map(call => call.topic).sort(), activeIds, 'every active topic, none twice')
+  assert.ok(read("SELECT next_due_at FROM topic WHERE board_id = 'acme' AND status = 'active'").every(row => row.next_due_at > new Date().toISOString()),
+    'each comes back on its own interval')
+  const afterAll = deepseek.calls.length
+  write("UPDATE topic SET next_due_at = '2999-01-01T00:00:00.000Z' WHERE board_id = 'acme'")
 
   // Research one topic now, due or not; a success clears the error.
   deepseek.reply = () => ({ answer: { summary: 't2 这次成功了', evidence: [], stance: null } })
@@ -929,7 +944,7 @@ assert.equal((await http('GET', '/state?board=nope')).status, 404)
   assert.equal(res.status, 200, JSON.stringify(res.body))
   assert.equal(res.body.run.ok, true)
   await hooks.settled('acme')
-  assert.deepEqual(deepseek.calls.slice(quiet).map(call => call.topic), ['t2'])
+  assert.deepEqual(deepseek.calls.slice(afterAll).map(call => call.topic), ['t2'])
   state = (await http('GET', '/state')).body
   assert.equal(state.research.error, null)
   assert.equal(state.last_run.mode, 'manual')

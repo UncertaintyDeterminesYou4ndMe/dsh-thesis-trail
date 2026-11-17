@@ -105,7 +105,8 @@ window.__ModuleLoader__.load({
 .rb-num{font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:-.01em}
 
 /* header — one hairline under a single baseline */
-.rb-head{display:flex;align-items:center;gap:14px;padding:11px 20px;border-bottom:1px solid var(--rb-line);flex:0 0 auto}
+/* With dsh's sidebar collapsed, the window buttons sit at the top left; dsh says how much room they need. */
+.rb-head{display:flex;align-items:center;gap:14px;padding:11px 20px;padding-left:max(20px,var(--dsh-frame-leading-clearance,0px));border-bottom:1px solid var(--rb-line);flex:0 0 auto}
 .rb-brand{display:flex;flex-direction:column;min-width:0}
 .rb-title{font-size:13.5px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;line-height:1.3}
 .rb-sub{font-size:11.5px;color:var(--rb-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
@@ -311,6 +312,8 @@ a.rb-ev-title:hover{text-decoration:underline;text-underline-offset:2px}
 .rb-rs a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 .rb-rs-answer{margin:6px 0 0;white-space:pre-wrap;line-height:1.65;color:var(--rb-ink);font-size:11.5px;max-height:320px;overflow:auto;border-left:1px solid var(--rb-line);padding-left:10px}
 
+.rb-notice{display:flex;align-items:baseline;gap:14px;padding:8px 20px;border-bottom:1px solid var(--rb-line);font-size:12px;line-height:1.6;color:var(--rb-ink);flex:0 0 auto}
+.rb-notice .rb-link{flex:0 0 auto;margin-left:auto;font-size:11.5px;color:var(--rb-muted)}
 .rb-foot{display:flex;align-items:center;gap:8px;padding:7px 20px;border-top:1px solid var(--rb-line);font-size:10.5px;color:var(--rb-muted);flex:0 0 auto;font-variant-numeric:tabular-nums}
 .rb-foot .sep{opacity:.4}
 .rb-foot .grow{flex:1 1 auto}
@@ -383,7 +386,7 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
 .rb-src{display:grid;grid-template-columns:auto 1fr;column-gap:8px;align-items:baseline;font-size:12px;color:var(--rb-ink);cursor:pointer}
 .rb-src input{margin:0;accent-color:var(--rb-brand)}
 .rb-src-desc{grid-column:2;font-size:11px;line-height:1.5;color:var(--rb-muted)}
-.rb-srcline{font-size:11.5px;color:var(--rb-muted);margin-top:1px;padding:0;border:0;background:none;cursor:pointer;text-align:left}
+.rb-srcline{font-size:11.5px;color:var(--rb-muted);margin-top:1px;padding:0;border:0;background:none;cursor:pointer;text-align:left;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rb-srcline:hover{color:var(--rb-ink);text-decoration:underline}
 
 /* passages — the text is the editor: hover tints it, a click edits in place */
@@ -481,7 +484,7 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
 }
 @container (max-width: 860px){
   .rb-body{grid-template-columns:252px minmax(0,1fr)}
-  .rb-head{padding:10px 14px;gap:10px}
+  .rb-head{padding:10px 14px;padding-left:max(14px,var(--dsh-frame-leading-clearance,0px));gap:10px}
   .rb-doc{padding:15px 16px 24px}
   .rb-usage{padding:15px 16px 24px}
   .rb-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -503,7 +506,7 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
   .rb-dtitle,.rb-text.rb-dtitle,.rb-edit.heading{font-size:15.5px}
 }
 @container (max-width: 520px){
-  .rb-head{padding:9px 12px;gap:8px}
+  .rb-head{padding:9px 12px;padding-left:max(12px,var(--dsh-frame-leading-clearance,0px));gap:8px}
   .rb-title{font-size:12.5px}
   .rb-doc{padding:12px 12px 18px}
   .rb-tl .rb-ev,.rb-asm{grid-template-columns:44px minmax(0,1fr);gap:7px}
@@ -678,6 +681,7 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
         refused: '模型拒绝回答',
         no_json_in_answer: '回答里没有结果，没写入任何东西',
         no_search: '模型没有联网搜索就作答，没写入任何东西',
+        no_active_topics: '没有进行中的议题',
       }
       : {
         no_api_key: 'no DeepSeek key (DEEPSEEK_API_KEY in ~/.dsh/.env)',
@@ -690,6 +694,7 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
         refused: 'the model refused',
         no_json_in_answer: 'the answer had no result block; nothing was written',
         no_search: 'the model answered without searching the web; nothing was written',
+        no_active_topics: 'No active topics',
       }
     // How a pass started and how it ended, for the footer.
     const RUN_MODE_NAMES = isZh
@@ -2891,7 +2896,7 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
         bar(`${58 + (index % 4) * 10}%`, 12),
         bar('34%', 9))
       return h('div', { className: 'rb-root' },
-        h('header', { className: 'rb-head' },
+        h('header', { className: 'rb-head', 'data-window-drag': '' },
           h('div', { className: 'rb-brand', style: { flex: '1 1 auto' } },
             bar(96, 13),
             bar(220, 10, { marginTop: 6 })),
@@ -2933,6 +2938,12 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
       const [busy, setBusy] = useState(false)
       const [running, setRunning] = useState(false)
       const [notice, setNotice] = useState(null)
+      // { count, estimate, notice } when a pass found nothing due: that notice offers to research every topic.
+      const [offerAll, setOfferAll] = useState(null)
+      // Topic ids in the order the list first showed them; see `topics` below.
+      const listOrder = useRef(null)
+      // The "started" notice goes away by itself when that pass ends.
+      const startedNotice = useRef(false)
       const [query, setQuery] = useState('')
       const [creating, setCreating] = useState(false)
       const [timelineTick, setTimelineTick] = useState(0)
@@ -3009,27 +3020,45 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
 
       // The Host researches the due topics in the background; the panel says so
       // and polls for the result.
-      const runNow = useCallback(async () => {
+      /** Why a pass did nothing, with when the next topic falls due. */
+      const nothingDueText = () => {
+        const next = (state?.topics ?? []).filter(topic => topic.status === 'active' && topic.next_due_at).map(topic => topic.next_due_at).sort()[0]
+        return isZh
+          ? `现在没有到期的议题，所以这次没有研究。${next ? `最早的议题 ${dueText(next)}到期。` : ''}议题查过以后按重要性隔 1 天、7 天或 30 天再查，定时巡检只查到期的。`
+          : `Nothing is due, so nothing was researched.${next ? ` The next topic is due ${dueText(next)}.` : ''} A checked topic is due again after 1, 7 or 30 days by importance, and a pass only checks due topics.`
+      }
+
+      // all: research every active topic now, due or not (the reader confirmed the cost).
+      const runNow = useCallback(async (all = false) => {
         setRunning(true)
         setNotice(null)
+        setOfferAll(null)
+        startedNotice.current = false
         try {
-          const { ok, data } = await postJson(here('/run-now'))
+          const { ok, data } = await postJson(here('/run-now'), all ? { all: true } : undefined)
           if (!ok) {
-            setNotice(data?.code === 'nothing_due'
-              ? (isZh ? '没有到期的议题，也没有等 AI 处理的评论。要查某个议题，打开它点「立即研究」。' : 'nothing is due; open a topic and use Research now')
-              : data?.code ? researchErrorText(data.code) : (isZh ? '启动失败' : 'could not start'))
+            const text = data?.code === 'nothing_due'
+              ? nothingDueText()
+              : data?.code ? researchErrorText(data.code) : (isZh ? '启动失败' : 'could not start')
+            setNotice(text)
+            // Tied to this notice text, so a later notice never carries the offer along.
+            if (data?.code === 'nothing_due' && data.active > 0) setOfferAll({ count: data.active, estimate: data.estimate, notice: text })
             setRunning(false)
             return
           }
+          startedNotice.current = true
           setNotice(data?.queued
-            ? (isZh ? '上一轮还没结束，结束后接着跑' : 'queued behind the running pass')
-            : (isZh ? '已开始研究到期的议题，跑完这里会自动更新' : 'researching the due topics; this panel updates when done'))
-          setTimeout(() => { setRunning(false); load({ quick: true }) }, 3000)
+            ? (isZh ? '上一轮还没结束，结束后接着跑。' : 'Queued behind the running pass.')
+            : all
+              ? (isZh ? '已开始：先取一手材料，再逐个研究全部议题。跑完这里会自动更新。' : 'Started: gathering primary material, then researching every topic. This panel updates when done.')
+              : (isZh ? '已开始：先取一手材料，再逐个研究到期的议题。跑完这里会自动更新。' : 'Started: gathering primary material, then researching the due topics. This panel updates when done.'))
+          // Load first, so the open pass keeps the button busy without a gap.
+          setTimeout(async () => { try { await load({ quick: true }) } finally { setRunning(false) } }, 3000)
         } catch {
           setNotice(isZh ? '启动失败' : 'could not start')
           setRunning(false)
         }
-      }, [load, here])
+      }, [load, here, state])
 
       const saveSchedule = useCallback(async patch => {
         const { ok, data } = await postJson(here('/schedule'), patch)
@@ -3051,6 +3080,8 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
         setCreating(false)
         setQuery('')
         setNotice(nextNotice.current)
+        setOfferAll(null)
+        listOrder.current = null
         nextNotice.current = null
         load({ markSeen: true })
       }, [board, load])
@@ -3181,7 +3212,7 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
       }
       if (boards && boards.length === 0) {
         return h('div', { className: 'rb-root' },
-          h('header', { className: 'rb-head' },
+          h('header', { className: 'rb-head', 'data-window-drag': '' },
             h('div', { className: 'rb-brand' }, h('div', { className: 'rb-title-row' }, h('span', { className: 'rb-title' }, t('title')))),
             h('div', { className: 'rb-actions' },
               h('button', { className: 'rb-btn', onClick: () => load(), disabled: busy }, busy ? t('loading') : t('refresh')))),
@@ -3194,17 +3225,32 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
                       : h(Welcome, { hasKey, onImport: () => setSheet('import'), onNew: () => setSheet('new') }))))),
           h('style', null, STYLE))
       }
+      // Before the early returns below, so the hooks run in the same order every render.
+      const passingNow = running || Boolean(state?.open_run) || Boolean(state?.research?.running)
+      useEffect(() => {
+        if (!passingNow && startedNotice.current) { startedNotice.current = false; setNotice(null) }
+      }, [passingNow])
+
       if (!state) {
         return h(BoardSkeleton)
       }
 
-      const topics = state.topics ?? []
+      // The Host sorts by importance. The list keeps the order it opened with, so a
+      // topic does not jump away while the reader changes it; new topics go last.
+      // Reopening the panel, switching boards or Refresh sorts it again.
+      const byId = new Map((state.topics ?? []).map(topic => [topic.id, topic]))
+      const kept = (listOrder.current ?? []).filter(id => byId.has(id))
+      const keptSet = new Set(kept)
+      listOrder.current = [...kept, ...(state.topics ?? []).map(topic => topic.id).filter(id => !keptSet.has(id))]
+      const topics = listOrder.current.map(id => byId.get(id))
       const current = topics.find(topic => topic.id === selected) ?? null
       const needle = query.trim().toLowerCase()
       const filteredTopics = needle === ''
         ? topics
         : topics.filter(topic => `${topic.title} ${topic.metric ?? ''} ${topic.thesis}`.toLowerCase().includes(needle))
       const openRun = state.open_run
+      // From the click until the pass ends, the button says so.
+      const passing = passingNow
       const lastRun = state.last_run
       // A scheduled check that found nothing due leaves no run; it is still the latest pass.
       const idleLast = Boolean(state.research?.idle_at) &&
@@ -3214,7 +3260,7 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
       const showUsage = view === 'usage'
 
       return h('div', { className: 'rb-root' },
-        h('header', { className: 'rb-head' },
+        h('header', { className: 'rb-head', 'data-window-drag': '' },
           h('div', { className: 'rb-brand' },
             h('div', { className: 'rb-title-row' },
               h('span', { className: 'rb-title' }, t('title')),
@@ -3236,15 +3282,21 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
             // Cadence and "run now" both decide when a pass happens, so they sit together.
             schedule ? h(CadenceControl, { schedule, onSave: saveSchedule }) : null,
             h('button', {
-              className: 'rb-btn primary', onClick: runNow, disabled: running,
-            }, running ? (isZh ? '已排队' : 'queued') : t('runNow')),
+              className: 'rb-btn primary', onClick: () => runNow(false), disabled: passing,
+            }, passing ? (isZh ? '巡检中…' : 'Running…') : t('runNow')),
             h('button', {
               className: `rb-btn${showUsage ? ' on' : ''}`, 'aria-pressed': showUsage,
               onClick: () => { setSheet(null); setView(showUsage ? 'topics' : 'usage') },
             }, isZh ? '用量' : 'Usage'),
-            h('button', { className: 'rb-btn', onClick: () => load({ markSeen: true }), disabled: busy }, busy ? t('loading') : t('refresh')),
+            h('button', { className: 'rb-btn', onClick: () => { listOrder.current = null; load({ markSeen: true }) }, disabled: busy }, busy ? t('loading') : t('refresh')),
           ),
         ),
+
+        notice ? h('div', { className: 'rb-notice', role: 'status' },
+          h('span', null, notice),
+          offerAll?.notice === notice ? h('button', { type: 'button', className: 'rb-btn sm', onClick: () => runNow(true), disabled: passing },
+            isZh ? `全部 ${offerAll.count} 个议题重研一遍（约 ${money(offerAll.estimate)}）` : `Research all ${offerAll.count} topics now (about ${money(offerAll.estimate)})`) : null,
+          h('button', { type: 'button', className: 'rb-link', onClick: () => { setNotice(null); setOfferAll(null) } }, isZh ? '知道了' : 'Dismiss')) : null,
 
         showUsage ? h(UsageView, { boards, current: board, onClose: () => setView('topics') }) : null,
         hasKey ? null : h('div', { className: 'rb-keybar' }, `${isZh ? '没有 DeepSeek API key，巡检不会运行。' : 'No DeepSeek API key; passes will not run. '}${KEY_HELP}`),
@@ -3344,9 +3396,6 @@ a.rb-ev-title:focus-visible{outline:2px solid var(--rb-brand);outline-offset:2px
             h('span', { className: 'sep' }, '·'),
             h('span', { className: 'err' }, ` ${isZh ? '上次研究出错：' : 'last research failed: '}${researchErrorText(state.research.error)}`),
             state.research.retry_at ? ` ${isZh ? `，${clockOf(state.research.retry_at)} 自动重试` : `; retrying at ${clockOf(state.research.retry_at)}`}` : null) : null,
-          notice ? h('span', { className: 'rb-foot-fit', title: notice },
-            h('span', { className: 'sep' }, '·'),
-            ` ${notice}`) : null,
           h('span', { className: 'grow' }),
           lastRun?.summary ? h('span', { className: 'rb-foot-fit rb-foot-sum', title: lastRun.summary }, lastRun.summary) : null,
         ),
