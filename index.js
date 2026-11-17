@@ -1794,7 +1794,12 @@ export function apply(ctx, config = {}) {
         const slot = latestSlot(rule, now)
         if (slot === null) continue
         if (board.last_slot_at && slot <= Date.parse(board.last_slot_at)) continue
-        db.prepare('UPDATE board SET last_slot_at = ? WHERE id = ?').run(new Date(slot).toISOString(), board.id)
+        // Claim the slot in one statement: when the desktop app and `dsh web`
+        // both load this plugin on the same database, only one of them runs it.
+        const slotAt = new Date(slot).toISOString()
+        const claimed = db.prepare('UPDATE board SET last_slot_at = ? WHERE id = ? AND (last_slot_at IS NULL OR last_slot_at < ?)')
+          .run(slotAt, board.id, slotAt)
+        if (claimed.changes === 0) continue
         requestPass(board.id, { reason: 'scheduled' })
       }
       // Retries whose wait is over, one request per board. An entry in flight
